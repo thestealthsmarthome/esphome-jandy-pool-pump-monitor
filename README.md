@@ -27,7 +27,7 @@ The pump does **not** report watts on the bus. The iAqualink app calculates watt
 
 - **M5Stack ATOM Lite** (ESP32)
 - **M5Stack ATOMIC RS485 base** (SP3485EE transceiver + 6–24 V → 5 V regulator; powers the ATOM off the bus 12 V, no separate supply). In stock at Mouser (part A131), RobotShop, M5Stack store.
-- 3–4 short wires + wire nuts/Wago connectors. No RJ45; the Jandy pump uses a 4-pin screw terminal.
+- Wire to tap the bus + wire nuts/Wago connectors. Outdoor **Cat6/Ethernet cable works great** here (its twisted pairs suit RS485). You land the individual conductors on the screw terminal, there's no RJ45 plug involved.
 
 ## Wiring
 
@@ -40,7 +40,20 @@ The Jandy VS FloPro comm port is a **4-conductor cable on a screw terminal bar**
 | Yellow | Data- / B | B |
 | Green | COM / GND | GND |
 
-Land your four wires under the **same terminal-bar screws** the iQPUMP01 already uses (you're joining the bus in parallel). Ferrule the tap wires so the clamp grips both conductors.
+Land your four wires under the **same terminal-bar screws** the iQPUMP01 already uses (you're joining the bus in parallel, right where the stock Jandy comm cable connects). Ferrule the tap wires so the clamp grips both conductors.
+
+### Using Cat6 / Ethernet cable (recommended)
+
+Cat6 is ideal because its twisted pairs improve RS485 noise rejection over an outdoor run. You do **not** use an RJ45 plug; strip the jacket and land the individual conductors. The one rule that matters: keep **Data+ and Data- on the same twisted pair**.
+
+| Cat6 conductor | Signal (Jandy wire) |
+|---|---|
+| Blue | Data+ / A (Black) |
+| White-Blue | Data- / B (Yellow) |
+| Brown | +12 V (Red) |
+| White-Brown | GND (Green) |
+
+If the cable is shielded (STP), ground the drain wire at **one end only** (the ATOM end) to avoid a ground loop. Plain UTP: nothing to do. At 9600 baud RS485 runs happily over hundreds of feet, so length is a non-issue.
 
 - **Kill the pump breaker before opening the comm compartment.**
 - **Do not add a 120 Ω termination resistor.** The bus is already terminated at both ends; a third load corrupts signaling.

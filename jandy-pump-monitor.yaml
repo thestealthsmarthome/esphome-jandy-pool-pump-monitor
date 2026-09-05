@@ -1,0 +1,159 @@
+# Jandy VS FloPro + iQPUMP01 — read-only RS485 monitor for Home Assistant (ESPHome)
+# Hardware: M5Stack ATOM Lite + ATOMIC RS485 base (see README).
+# READ-ONLY: this device never transmits. The iAqualink app keeps full control of the pump.
+#
+# Publishes to Home Assistant:
+#   - Pool Pump RPM        (commanded RPM, from the master demand frame)
+#   - Pool Pump Power (est) (MODELED from RPM — see caveat below)
+#   - Pool Pump Running     (RPM > 100)
+#   - Pool Pump Energy (est) (lifetime kWh; let the HA Energy Dashboard derive daily/monthly)
+#
+# CAVEAT: the pump does NOT report watts on the bus. The iAqualink app calculates watts
+# from RPM, and so do we (piecewise-linear interpolation of measured app readings). Because
+# it is modeled, not metered, it cannot independently detect mechanical drag.
+#
+# CALIBRATE FOR YOUR PUMP: set the pump to several known speeds in iAqualink, note the RPM
+# and watts the app shows at each, and replace the RX[]/WX[] arrays below with your points.
+
+esphome:
+  name: pool-pump-monitor
+  friendly_name: Pool Pump Monitor
+
+esp32:
+  board: m5stack-atom
+  framework:
+    type: esp-idf     # arduino also works
+
+logger:
+  level: INFO         # parsing runs regardless of level; INFO keeps the console quiet
+
+# --- Copy these into your secrets.yaml (see secrets.yaml.example) ---
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Pool Pump Fallback"
+    password: !secret pool_pump_ap_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret pool_pump_api_key   # ESPHome generates one when you create the device
+
+ota:
+  - platform: esphome
+
+# Manual restart button. A silent parser stall is best cleared by a full reflash, but this
+# is handy for routine reboots (see README > Troubleshooting).
+button:
+  - platform: restart
+    name: "Pool Pump Monitor Restart"
+
+globals:
+  - id: last_frame_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+# RS485 bus: Jandy iQPUMP01 <-> pump. 9600 8N1. RX=22, TX=19 on the ATOMIC RS485 base.
+# We only listen. Frames end with 10 03; we split on that and parse the demand frame.
+uart:
+  id: bus485
+  rx_pin: 22
+  tx_pin: 19
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 512
+  debug:
+    direction: RX
+    dummy_receiver: true
+    after:
+      delimiter: [0x10, 0x03]
+    sequence:
+      - lambda: |-
+          const auto &b = bytes;
+          size_t n = b.size();
+          for (size_t i = 0; i + 10 <= n; i++) {
+            // demand frame: 10 02 78 44 00 <lo> <hi> <cksum> 10 03   (78 = pump device id)
+            if (b[i]==0x10 && b[i+1]==0x02 && b[i+2]==0x78 && b[i+3]==0x44 &&
+                b[i+8]==0x10 && b[i+9]==0x03) {
+              uint16_t sum = 0;
+              for (size_t k=i; k<=i+6; k++) sum += b[k];
+              if ((sum & 0xFF) != b[i+7]) return;        // bad checksum, skip
+              uint16_t raw = b[i+5] | (b[i+6] << 8);
+              float rpm = raw / 4.0f;                    // demand value is RPM * 4
+              id(last_frame_ms) = millis();
+              id(pump_rpm).publish_state(rpm);
+              id(pump_running).publish_state(rpm > 100);
+              // ---- watts model: replace these with YOUR pump's (rpm, watts) app readings ----
+              const float RX[6] = {0, 750, 1499, 2275, 3000, 3450};
+              const float WX[6] = {0,  44,  176,  481, 1064, 1589};
+              float w;
+              if (rpm <= RX[0]) w = 0;
+              else if (rpm >= RX[5]) {
+                float s = (WX[5]-WX[4])/(RX[5]-RX[4]);
+                w = WX[5] + s*(rpm - RX[5]);             // extrapolate above top anchor
+              } else {
+                w = 0;
+                for (int k=1;k<6;k++) {
+                  if (rpm <= RX[k]) {
+                    float s = (WX[k]-WX[k-1])/(RX[k]-RX[k-1]);
+                    w = WX[k-1] + s*(rpm - RX[k-1]);
+                    break;
+                  }
+                }
+              }
+              id(pump_power).publish_state(w);
+              return;
+            }
+          }
+
+# Watchdog: if no demand frame arrives for 30s, report the pump as stopped.
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          if (id(last_frame_ms) != 0 && (millis() - id(last_frame_ms) > 30000)) {
+            id(pump_rpm).publish_state(0);
+            id(pump_power).publish_state(0);
+            id(pump_running).publish_state(false);
+          }
+
+sensor:
+  - platform: template
+    name: "Pool Pump RPM"
+    id: pump_rpm
+    unit_of_measurement: "RPM"
+    accuracy_decimals: 0
+    state_class: measurement
+    icon: "mdi:pump"
+  - platform: template
+    name: "Pool Pump Power (est)"
+    id: pump_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+  # Lifetime kWh via Riemann integration of modeled watts. millis()-based, so it cannot
+  # boot-spike the way total_daily_energy does. Let the HA Energy Dashboard derive daily/monthly.
+  - platform: integration
+    name: "Pool Pump Energy (est)"
+    id: pump_energy_total
+    sensor: pump_power
+    time_unit: h
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    filters:
+      - multiply: 0.001   # W*h -> kWh
+
+binary_sensor:
+  - platform: template
+    name: "Pool Pump Running"
+    id: pump_running
+    device_class: running

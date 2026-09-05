@@ -44,7 +44,7 @@ Land your four wires under the **same terminal-bar screws** the iQPUMP01 already
 
 ### Using Cat6 / Ethernet cable (recommended)
 
-Cat6 is ideal because its twisted pairs improve RS485 noise rejection over an outdoor run. You do **not** use an RJ45 plug; strip the jacket and land the individual conductors. The one rule that matters: keep **Data+ and Data- on the same twisted pair**.
+Cat6 is ideal because its twisted pairs improve RS485 noise rejection over an outdoor run. You do **not** use an RJ45 plug; strip the jacket and land the individual conductors. Keep **Data+ and Data- on the same twisted pair**.
 
 | Cat6 conductor | Signal (Jandy wire) |
 |---|---|
